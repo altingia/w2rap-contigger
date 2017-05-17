@@ -47,7 +47,6 @@
 int MAX_CELL_PATHS = 50;
 int MAX_DEPTH = 10;
 
-
 void step_1(vecbvec & bases,
             VecPQVec & quals,
             std::string out_dir,
@@ -405,7 +404,8 @@ void step_8(HyperBasevector &hbv,
     vecbasevector G;
     vec<int64_t> subsam_starts={0};
     vec<String> subsam_names={"C"};
-    FinalFiles(hbv, hbvinv, paths, subsam_names, subsam_starts, out_dir, out_prefix+ "_assembly", MAX_CELL_PATHS, MAX_DEPTH, G);
+    CoverageOutput coverageOutput(true, true, true);
+    FinalFiles(hbv, hbvinv, paths, subsam_names, subsam_starts, out_dir, out_prefix+ "_assembly", MAX_CELL_PATHS, MAX_DEPTH, G, coverageOutput);
     GFADump(out_prefix+ "_assembly",hbv,hbvinv,paths,MAX_CELL_PATHS,MAX_DEPTH,true);
 }
 
@@ -730,19 +730,21 @@ int main(const int argc, const char * argv[]) {
                                             hbv);
                     WriteReadPathVec(paths, (out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep] +
                                              ".paths").c_str());
+
+                    if (dump_detailed_gfa == validGFAOpts[1]) {
+                        GFADump(std::string(out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep]), hbv, hbvinv,
+                                paths, 0, 0, true);
+                    } else if (dump_detailed_gfa == validGFAOpts[2]) {
+                        GFADumpDetail(std::string(out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep]), hbv,
+                                      hbvinv);
+                    } else if (dump_detailed_gfa == validGFAOpts[3]) {
+                        GFADumpAbyss(std::string(out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep]), hbv,
+                                     hbvinv, paths, 0, 0, true);
+                    }
+
                     OutputLog(2) << "DONE!" << std::endl;
                 }
 
-                if (dump_detailed_gfa == validGFAOpts[1]) {
-                    GFADump(std::string(out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep]), hbv, hbvinv,
-                            paths, 0, 0, true);
-                } else if (dump_detailed_gfa == validGFAOpts[2]) {
-                    GFADumpDetail(std::string(out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep]), hbv,
-                                  hbvinv);
-                } else if (dump_detailed_gfa == validGFAOpts[3]) {
-                    GFADumpAbyss(std::string(out_dir + "/" + out_prefix + "." + step_outputg_prefix[ostep]), hbv,
-                                 hbvinv, paths, 0, 0, true);
-                }
             }
 
         }
