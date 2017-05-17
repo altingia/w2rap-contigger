@@ -547,6 +547,8 @@ void readstack::StrongConsensus2(basevector &con, QualVec &conq, const Bool rais
         auto beg = bs.begin();
         auto end = bs.end();
         auto cItr = con.begin(); //consensus sequence
+
+        // TODO: Revisar si esto tiene el problema del pintor? Es lo que mas tarda en AssembleGaps
         for (auto itr = beg; itr != end; ++itr, ++cItr) { // for every position of the read
             auto itrPair = std::mismatch(itr, end, cItr);
             if (itrPair.first - itr >= min_window) { //if the next mismatch to consensus is min_window away

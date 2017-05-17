@@ -13,6 +13,22 @@
 #include "paths/HyperBasevector.h"
 #include "paths/long/ReadPath.h"
 
+struct CoverageOutput {
+
+    CoverageOutput() :
+            reads(true),
+            assembly(true),
+            compressionIndex(true) {}
+
+    CoverageOutput(bool _reads = true, bool _assembly = true, bool _compressionIndex = true) :
+            reads(_reads),
+            assembly(_assembly),
+            compressionIndex(
+                    _compressionIndex) {}
+    bool reads;
+    bool assembly;
+    bool compressionIndex;
+};
 // Description of lines data structure:
 //
 // vec^4<int> = vec<vec<vec<vec<int>>>> lines.
@@ -173,6 +189,9 @@ void SortLines( vec<vec<vec<vec<int>>>>& lines, const HyperBasevector& hb,
 
 void DumpLineFiles( const vec<vec<vec<vec<int>>>>& lines, const HyperBasevector& hb,
      const vec<int>& inv, const ReadPathVec& paths, const String& dir );
+
+void DumpLineFilesCoverage( const vec<vec<vec<vec<int>>>>& lines, const HyperBasevector& hb,
+                    const vec<int>& inv, const ReadPathVec& paths, const String& dir, const CoverageOutput& coverageOutput );
 
 // Split a line into contigs.
 

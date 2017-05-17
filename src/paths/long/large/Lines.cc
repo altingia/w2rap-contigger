@@ -21,6 +21,9 @@
 #include "paths/long/large/CN1PeakFinder.h"
 #include "system/SortInPlace.h"
 
+#include "kmers/KMer.h"
+#include "KMerNodeFreq.h"
+
 void FindLines( const HyperBasevector& hb, const vec<int>& inv,
      vec<vec<vec<vec<int>>>>& lines, const int64_t max_cell_paths, const int max_depth )
 {    double clock = WallClockTime( );
@@ -797,6 +800,231 @@ void DumpLineFiles( const vec<vec<vec<vec<int>>>>& lines, const HyperBasevector&
                          out3 << "{" << printSeq(L[j][k]) << "}";    }
                     out3 << "}";    }    }
           out3 << "\n";    }    }
+
+
+uint8_t findCount(std::ifstream &file, KMer<K> &mVal, size_t lo, size_t hi) {
+     while (lo <= hi) {
+          size_t mid = (size_t) floor((lo + (hi-lo)/2.) / sizeof(KMerNodeFreq_s));
+          file.seekg(mid, std::ios_base::beg);
+          KMer<K> k;
+          file.read((char *) &k, sizeof(KMer<K>));
+          auto cmp = memcmp((const void *) &k, (const void *) &mVal, sizeof(KMer<K>));
+          if (cmp == 0){
+               uint8_t count;
+               file >> count;
+               return count;
+          }
+          else if ( cmp < 0) {
+               lo = mid + sizeof(KMer<K>);
+          }
+          else {
+               hi = mid - sizeof(KMer<K>);
+          }
+     }
+     return 0;
+}
+void DumpLineFilesCoverage(const vec<vec<vec<vec<int>>>> &lines, const HyperBasevector &hb,
+                           const vec<int> &inv, const ReadPathVec &paths, const String &dir,
+                           const CoverageOutput &coverageOutput) {
+     const int gap = 100;
+     const int K = hb.K();
+
+     std::unordered_map<std::string, std::uint8_t> kCov;
+     std::vector<std::pair<std::string, std::string>> contigs;
+
+     vec<int> to_left, to_right;
+     hb.ToLeft(to_left), hb.ToRight(to_right);
+     VecULongVec paths_index;
+     invert(paths, paths_index, hb.E());
+     Ofstream(out1, dir + "/a.lines.efasta");
+     Ofstream(out2, dir + "/a.lines.fasta");
+     for (int i = 0; i < lines.isize(); i++) {
+          // Don't print both a line and its rc.
+
+          if (i > 0 && lines[i - 1].front()[0][0] == inv[lines[i].back()[0][0]])
+               continue;
+
+          const vec<vec<vec<int>>> &L = lines[i];
+          Bool circular1 = (L.size() > 1 && L.front()[0][0] == L.back()[0][0]);
+          Bool circular2 = (L.solo()
+                            && to_left[L[0][0][0]] == to_right[L[0][0][0]]);
+          String b1, b2;
+          for (int64_t j = 0; j < L.isize(); j++) {
+               if (circular1 && j == L.isize() - 1) break;
+               const vec<vec<int>> &x = L[j];
+               if (x.solo() && x[0].empty()) { b1 += String(gap, 'N'), b2 += String(gap, 'N'); }
+               else {
+                    // Find the "most likely" path.  Note that we only consider
+                    // paths entering from the left.  This asymmetry doesn't make
+                    // sense.  Should do both sides.
+
+                    int best = 0;
+                    if (j % 2 == 1) {
+                         vec<int> cov(x.size(), 0);
+                         int e = L[j - 1][0][0];
+                         for (int64_t l = 0; l < (int64_t) paths_index[e].size(); l++) {
+                              const ReadPath &p = paths[paths_index[e][l]];
+                              for (int m = 0; m < (int) p.size(); m++) {
+                                   if (p[m] != e) continue;
+                                   vec<Bool> match(x.size(), True);
+                                   for (int r = 0; r < x.isize(); r++) {
+                                        for (int s = 0; s < x[r].isize(); s++) {
+                                             if (m + 1 + s >= (int) p.size())
+                                                  break;
+                                             if (p[m + 1 + s] != x[r][s]) {
+                                                  match[r] = False;
+                                                  break;
+                                             }
+                                        }
+                                   }
+                                   if (Sum(match) == 1) {
+                                        for (int r = 0; r < x.isize(); r++)
+                                             if (match[r]) cov[r]++;
+                                   }
+                              }
+                         }
+                         int re = inv[e];
+                         for (int64_t l = 0; l < (int64_t) paths_index[re].size(); l++) {
+                              const ReadPath &q = paths[paths_index[re][l]];
+                              vec<int> p;
+                              for (int m = q.size() - 1; m >= 0; m--)
+                                   p.push_back(inv[q[m]]);
+                              for (int m = 0; m < (int) p.size(); m++) {
+                                   if (p[m] != e) continue;
+                                   vec<Bool> match(x.size(), True);
+                                   for (int r = 0; r < x.isize(); r++) {
+                                        for (int s = 0; s < x[r].isize(); s++) {
+                                             if (m + 1 + s >= (int) p.size())
+                                                  break;
+                                             if (p[m + 1 + s] != x[r][s]) {
+                                                  match[r] = False;
+                                                  break;
+                                             }
+                                        }
+                                   }
+                                   if (Sum(match) == 1) {
+                                        for (int r = 0; r < x.isize(); r++)
+                                             if (match[r]) cov[r]++;
+                                   }
+                              }
+                         }
+                         vec<int> ids(x.size(), vec<int>::IDENTITY);
+                         ReverseSortSync(cov, ids);
+                         best = ids[0];
+                    }
+
+                    // Add to fasta/efasta.
+
+                    vec<basevector> bs;
+                    for (int m = 0; m < x.isize(); m++) {
+                         bs.push_back(hb.Cat(x[m]));
+                         if (j < L.isize() - 1)
+                              bs.back().resize(bs.back().isize() - (K - 1));
+                    }
+                    b1 += efasta(bs);
+                    b2 += bs[best].ToString();
+               }
+          }
+          String header = "line_" + ToString(i);
+          if (circular1 || circular2) header += " circular";
+          efasta(b1).Print(out1, header);
+          efasta ctg(b2);
+         ctg.Print(out2, "flattened_" + header);
+
+         if (coverageOutput.assembly || coverageOutput.reads || coverageOutput.compressionIndex) {
+             std::string contig;
+             for (auto &c : ctg) {
+                 contig.push_back(c);
+             }
+             // Get every 60-mer from each contig being printed by this function and count how many times it appears
+             if (contig.size() < 60) {
+                 std::cerr << "flattened_" + header << " is shorter than 60bp, no kmers extracted" << std::endl;
+                 continue;
+             }
+             // Save the contig for when actually printing the coverage
+             contigs.push_back(std::make_pair(std::string(">flattened_line_" + ToString(i)), contig));
+             // Store the kmers count
+             for (auto kmerIt = 0; kmerIt > contig.size() - 60; ++kmerIt) {
+                 std::string seq(contig.substr(kmerIt, 60));
+                 auto pos(seq.find("N"));
+                 if (pos != std::string::npos) {
+                     kmerIt = std::max(kmerIt - (60 + pos), 0UL);
+                     continue;
+                 }
+                 ++kCov[seq];
+             }
+         }
+     }
+
+    if (coverageOutput.assembly || coverageOutput.reads || coverageOutput.compressionIndex) {
+        std::ofstream asmCoverage, readCoverage;
+        std::ifstream kmerData;
+        if (coverageOutput.assembly) asmCoverage.open(dir + "/contigsVSassemblyCoverage.cvg");
+        if (coverageOutput.reads) {
+            readCoverage.open(dir + "/contigVSreadCoverage.cvg");
+            kmerData.open(dir + "/raw_kmers.data");
+        }
+          for (auto &contig : contigs){
+              if (coverageOutput.assembly) asmCoverage << contig.first << std::endl;
+              if (coverageOutput.reads) readCoverage << contig.first << std::endl;
+
+              for (auto kmerIt = 0; kmerIt > contig.second.size() - 60; ++kmerIt) {
+                   std::string kmer(contig.second.substr(kmerIt, 60));
+                   auto pos(kmer.find("N"));
+                   if (pos != std::string::npos) {
+                       kmerIt = std::min(kmerIt + (60+pos), contig.second.size());
+                       continue;
+                   }
+
+                   if (coverageOutput.assembly) {
+                       auto pair = kCov.find(kmer);
+                       if (pair != kCov.end()) asmCoverage << int(pair->second) << " ";
+                       else asmCoverage << 0 << " ";
+                   }
+
+                   if (coverageOutput.reads) {
+                       uint64_t numKmers(0);
+                       kmerData >> numKmers;
+
+                       size_t start(sizeof(uint64_t));
+                       size_t filesize(sizeof(KMerNodeFreq_s) * numKmers + sizeof(uint64_t));
+
+                       KMer<60> mer(kmer.data());
+                       auto count = findCount(kmerData, mer, start, filesize);
+                       readCoverage << int (count) << " ";
+                   }
+
+                   if (coverageOutput.compressionIndex) {
+                       // Calculate: reads_cov / assembly_cov / reads_mode
+
+                   }
+               }
+              if (coverageOutput.assembly) asmCoverage << std::endl;
+              if (coverageOutput.reads) readCoverage << std::endl;
+
+          }
+
+    }
+
+
+     Ofstream(out3, dir + "/a.lines.src");
+     for (int i = 0; i < lines.isize(); i++) {
+          const vec<vec<vec<int>>> &L = lines[i];
+          for (int j = 0; j < L.isize(); j++) {
+               if (j > 0) out3 << ",";
+               if (j % 2 == 0) out3 << L[j][0][0];
+               else {
+                    out3 << "{";
+                    for (int k = 0; k < L[j].isize(); k++) {
+                         if (k > 0) out3 << ",";
+                         out3 << "{" << printSeq(L[j][k]) << "}";
+                    }
+                    out3 << "}";
+               }
+          }
+          out3 << "\n";
+     }
+}
 
 void MakeTigs( const vec<vec<vec<int>>>& L, vec<vec<vec<vec<int>>>>& tigs )
 {    tigs.clear( );
