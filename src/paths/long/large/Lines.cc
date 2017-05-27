@@ -802,26 +802,39 @@ void DumpLineFiles( const vec<vec<vec<vec<int>>>>& lines, const HyperBasevector&
           out3 << "\n";    }    }
 
 
-uint8_t findCount(std::ifstream &file, KMer<K> &mVal, size_t lo, size_t hi) {
-     while (lo <= hi) {
-          size_t mid = (size_t) floor((lo + (hi-lo)/2.) / sizeof(KMerNodeFreq_s));
-          file.seekg(mid, std::ios_base::beg);
-          KMer<K> k;
-          file.read((char *) &k, sizeof(KMer<K>));
-          auto cmp = memcmp((const void *) &k, (const void *) &mVal, sizeof(KMer<K>));
-          if (cmp == 0){
-               uint8_t count;
-               file >> count;
-               return count;
-          }
-          else if ( cmp < 0) {
-               lo = mid + sizeof(KMer<K>);
-          }
-          else {
-               hi = mid - sizeof(KMer<K>);
-          }
+void makeCanonical(std::string &mer) {
+     std::unordered_map<char, char> comp({{'A', 'T'}, {'T', 'A'}, {'G', 'C'}, {'C', 'G'}, {'N', 'N'}});
+     std::string rev;
+
+     for (std::string::const_reverse_iterator c = mer.crbegin(); c != mer.crend(); ++c){
+          auto val = comp[*c];
+          rev.push_back(val);
      }
-     return 0;
+     mer = (mer < rev) ? mer : rev;
+}
+
+uint8_t findCountBin(std::ifstream &file, KMer<K> &lKmer, size_t lo, size_t hi) {
+    KMerNodeFreq_s target;
+    target.kdata[0] = lKmer.mVal[0];
+    target.kdata[1] = lKmer.mVal[1];
+    while (lo <= hi) {
+        size_t mid = (size_t) (lo + (hi - lo) / 2);
+        std::streamoff offset;
+        offset = sizeof(uint64_t) + mid * sizeof(KMerNodeFreq_s);
+        file.seekg(offset, std::ios_base::beg);
+        KMerNodeFreq_s sKmer;
+        file.read((char *) &sKmer, sizeof(KMerNodeFreq_s));
+
+        if (sKmer == target) {
+            return sKmer.count;
+        } else if (sKmer < target) {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    std::cerr << "Kmer not found" << std::endl;
+    return 0;
 }
 void DumpLineFilesCoverage(const vec<vec<vec<vec<int>>>> &lines, const HyperBasevector &hb,
                            const vec<int> &inv, const ReadPathVec &paths, const String &dir,
@@ -831,6 +844,7 @@ void DumpLineFilesCoverage(const vec<vec<vec<vec<int>>>> &lines, const HyperBase
 
      std::unordered_map<std::string, std::uint8_t> kCov;
      std::vector<std::pair<std::string, std::string>> contigs;
+     unsigned int merSize=60;
 
      vec<int> to_left, to_right;
      hb.ToLeft(to_left), hb.ToRight(to_right);
@@ -931,50 +945,55 @@ void DumpLineFilesCoverage(const vec<vec<vec<vec<int>>>> &lines, const HyperBase
           efasta ctg(b2);
          ctg.Print(out2, "flattened_" + header);
 
-         if (coverageOutput.assembly || coverageOutput.reads || coverageOutput.compressionIndex) {
-             std::string contig;
-             for (auto &c : ctg) {
-                 contig.push_back(c);
-             }
-             // Get every 60-mer from each contig being printed by this function and count how many times it appears
-             if (contig.size() < 60) {
-                 std::cerr << "flattened_" + header << " is shorter than 60bp, no kmers extracted" << std::endl;
-                 continue;
-             }
-             // Save the contig for when actually printing the coverage
-             contigs.push_back(std::make_pair(std::string(">flattened_line_" + ToString(i)), contig));
-             // Store the kmers count
-             for (auto kmerIt = 0; kmerIt > contig.size() - 60; ++kmerIt) {
-                 std::string seq(contig.substr(kmerIt, 60));
-                 auto pos(seq.find("N"));
-                 if (pos != std::string::npos) {
-                     kmerIt = std::max(kmerIt - (60 + pos), 0UL);
-                     continue;
-                 }
-                 ++kCov[seq];
-             }
-         }
+          if (coverageOutput.assembly || coverageOutput.reads || coverageOutput.compressionIndex) {
+               std::string contig;
+               for (auto &c : ctg) {
+                    contig.push_back(c);
+               }
+               // Get every 60-mer from each contig being printed by this function and count how many times it appears
+               if (contig.size() < merSize) {
+                    std::cerr << "flattened_" + header << " is shorter than 60bp, no kmers extracted" << std::endl;
+                    continue;
+               }
+               // Save the contig for when actually printing the coverage
+               contigs.push_back(std::make_pair(std::string(">flattened_line_" + ToString(i)), contig));
+               // Store the kmers count
+               for (auto kmerIt = 0; kmerIt < contig.size() - merSize +1; ++kmerIt) {
+                    std::string seq(contig.substr(kmerIt, merSize));
+                    auto pos(seq.find("N"));
+                    if (pos != std::string::npos) {
+                         //kmerIt = std::min(contig.size(), kmerIt + pos);
+                         continue;
+                    }
+                    makeCanonical(seq);
+                    kCov[seq] += 1;
+               }
+          }
      }
 
     if (coverageOutput.assembly || coverageOutput.reads || coverageOutput.compressionIndex) {
         std::ofstream asmCoverage, readCoverage;
         std::ifstream kmerData;
-        if (coverageOutput.assembly) asmCoverage.open(dir + "/contigsVSassemblyCoverage.cvg");
+         uint64_t numKmers(0);
+        if (coverageOutput.assembly) asmCoverage.open(dir + "/contigsVSassemblyCoverageC.cvg");
         if (coverageOutput.reads) {
             readCoverage.open(dir + "/contigVSreadCoverage.cvg");
             kmerData.open(dir + "/raw_kmers.data");
+             kmerData.read((char *) &numKmers, sizeof(uint64_t));
         }
           for (auto &contig : contigs){
-              if (coverageOutput.assembly) asmCoverage << contig.first << std::endl;
-              if (coverageOutput.reads) readCoverage << contig.first << std::endl;
+              if (coverageOutput.assembly) asmCoverage << contig.first << "\t" << contig.second.size() << std::endl;
+              if (coverageOutput.reads) readCoverage << contig.first <<  "\t" << contig.second.size() << std::endl;
 
-              for (auto kmerIt = 0; kmerIt > contig.second.size() - 60; ++kmerIt) {
-                   std::string kmer(contig.second.substr(kmerIt, 60));
+              for (auto kmerIt = 0; kmerIt < contig.second.size() - merSize +1; ++kmerIt) {
+                   std::string kmer(contig.second.substr(kmerIt, merSize));
                    auto pos(kmer.find("N"));
                    if (pos != std::string::npos) {
-                       kmerIt = std::min(kmerIt + (60+pos), contig.second.size());
+                        asmCoverage << 0 << " ";
+                        readCoverage << 0 << " ";
                        continue;
                    }
+                   makeCanonical(kmer);
 
                    if (coverageOutput.assembly) {
                        auto pair = kCov.find(kmer);
@@ -983,14 +1002,8 @@ void DumpLineFilesCoverage(const vec<vec<vec<vec<int>>>> &lines, const HyperBase
                    }
 
                    if (coverageOutput.reads) {
-                       uint64_t numKmers(0);
-                       kmerData >> numKmers;
-
-                       size_t start(sizeof(uint64_t));
-                       size_t filesize(sizeof(KMerNodeFreq_s) * numKmers + sizeof(uint64_t));
-
                        KMer<60> mer(kmer.data());
-                       auto count = findCount(kmerData, mer, start, filesize);
+                       auto count = findCountBin(kmerData, mer, 0, numKmers);
                        readCoverage << int (count) << " ";
                    }
 
@@ -1001,9 +1014,7 @@ void DumpLineFilesCoverage(const vec<vec<vec<vec<int>>>> &lines, const HyperBase
                }
               if (coverageOutput.assembly) asmCoverage << std::endl;
               if (coverageOutput.reads) readCoverage << std::endl;
-
           }
-
     }
 
 
