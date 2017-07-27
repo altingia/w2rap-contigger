@@ -128,6 +128,9 @@ void buildHBVFromEdges( vecbvec const& edges, unsigned K, HyperBasevector* pHBV,
     pFwdEdgeXlat.resize(edges.size(),-1);
     pRevEdgeXlat.resize(edges.size(),-1);
 
+    if (edges.size() > std::numeric_limits<int>::max()) {
+        std::cout << "*** WARINING - Number of edges exceeds max int - WARNING  ***\n";
+    }
     //Now add the edges, and their rcs to the graph, this probably shouldn't be parallel neither (data corruption)
     for (uint64_t i=0;i<edges.size();++i){
         auto fwEdgeId = pHBV->EdgeObjectCount();
